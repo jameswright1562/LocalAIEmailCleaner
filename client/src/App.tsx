@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AlertTriangle, X } from "lucide-react";
 import { api } from "./api";
 import { Dashboard } from "./components/Dashboard";
 import { HistoryPage } from "./components/HistoryPage";
@@ -8,6 +9,7 @@ import { SettingsPage } from "./components/SettingsPage";
 import { UnsubscribePage } from "./components/UnsubscribePage";
 import { AppState, CleanupRun, CleanupStreamEvent, Schedule, Settings } from "./types";
 import "./styles/app.css";
+import { Button, Spinner } from "./components/Controls";
 
 const emailPageSize = 50;
 
@@ -23,8 +25,10 @@ export default function App() {
   const [emailTotal, setEmailTotal] = useState(0);
   const [hasMoreEmails, setHasMoreEmails] = useState(false);
   const [loadingEmails, setLoadingEmails] = useState(false);
+  const [lastError, setLastError] = useState("");
 
   function pushToast(message: string, tone: "info" | "error" | "success" = "info") {
+    if (tone === "error") setLastError(message);
     const id = crypto.randomUUID();
     setToasts((current) => [...current.slice(-4), { id, message, tone }]);
     window.setTimeout(() => {
@@ -71,6 +75,7 @@ export default function App() {
 
   async function withRefresh(action: () => Promise<unknown>, done: string) {
     setRunning(true);
+    setLastError("");
     try {
       await action();
       await refresh();
@@ -115,6 +120,7 @@ export default function App() {
 
   function runCleanup(mode: CleanupRun["mode"] = "manual") {
     setRunning(true);
+    setLastError("");
     setRunEvents([]);
     setModelOutput("");
     setLiveRun(null);
@@ -142,7 +148,7 @@ export default function App() {
               : event.message;
           setModelOutput((current) => `${current}\n\n${event.message}\n${content}\n`.slice(-60000));
         }
-        if (event.type === "log" && event.message.startsWith("Classifying batch")) {
+        if (event.type === "log" && event.message.startsWith("Processing ")) {
           pushToast(event.message, "info");
         }
         if (event.type === "run") {
@@ -154,6 +160,7 @@ export default function App() {
           }
         }
         if (event.type === "error") {
+          setLastError(event.message);
           pushToast(event.message, "error");
         }
       })
@@ -168,17 +175,23 @@ export default function App() {
 
   if (!state) {
     return (
-      <main className="loading-screen">
-        <div className="brand-mark">AI</div>
-        <span>Loading local inbox state</span>
+      <main className="grid min-h-screen place-items-center bg-slate-50 text-slate-500">
+        <div className="grid place-items-center gap-3">
+          <div className="grid h-12 w-12 place-items-center rounded-xl bg-indigo-700 text-white shadow-sm shadow-indigo-900/20">AI</div>
+          <span className="inline-flex items-center gap-2 font-bold">
+            <Spinner />
+            Loading local inbox state
+          </span>
+        </div>
       </main>
     );
   }
 
   return (
-    <div className="app-shell">
+    <div className="grid min-h-screen grid-cols-[280px_minmax(0,1fr)] bg-slate-50 max-[980px]:grid-cols-1">
       <Sidebar page={page} onPageChange={setPage} />
-      <main className="content-shell">
+      <main className="min-w-0 p-7 max-[980px]:p-4">
+        {lastError ? <ErrorBanner message={lastError} onDismiss={() => setLastError("")} /> : null}
         {page === "dashboard" ? (
           <Dashboard
             emailTotal={emailTotal}
@@ -205,6 +218,7 @@ export default function App() {
         {page === "settings" ? (
           <SettingsPage
             automationTools={state.automationTools}
+            busy={running}
             settings={state.settings}
             onProbeTools={probeTools}
             onSave={saveSettings}
@@ -213,13 +227,38 @@ export default function App() {
           />
         ) : null}
       </main>
-      <div className="toast-stack">
+      <div className="fixed bottom-6 right-6 z-10 grid w-[min(420px,calc(100vw-48px))] gap-2.5">
         {toasts.map((toast) => (
-          <div className={`toast ${toast.tone}`} key={toast.id}>
+          <div
+            className={`rounded-lg border bg-white/95 px-3.5 py-3 font-bold shadow-lg backdrop-blur ${
+              toast.tone === "error"
+                ? "border-rose-300 text-rose-700"
+                : toast.tone === "success"
+                  ? "border-teal-300 text-teal-800"
+                  : "border-slate-200 text-slate-800"
+            }`}
+            key={toast.id}
+          >
             {toast.message}
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <div className="mx-auto mb-4 flex max-w-7xl items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-rose-800">
+      <AlertTriangle className="mt-0.5 shrink-0" size={18} />
+      <div className="min-w-0 flex-1">
+        <strong className="block text-sm">Something needs attention</strong>
+        <p className="break-words text-sm leading-5">{message}</p>
+      </div>
+      <Button variant="ghost" onClick={onDismiss}>
+        <X size={16} />
+        Dismiss
+      </Button>
     </div>
   );
 }

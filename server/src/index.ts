@@ -5,7 +5,7 @@ import { runCleanup } from "./services/cleanup.js";
 import { discoverAutomationTools } from "./services/automationTools.js";
 import { createGmailAuthUrl, exchangeGmailAuthCode, syncGmailInbox } from "./services/gmail.js";
 import { probeModels } from "./services/models.js";
-import { queryDecisionHistory, readEmailPage, readState, updateState } from "./services/store.js";
+import { queryDecisionHistory, readEmailPage, readState, resetStateForTests, updateState } from "./services/store.js";
 import { CleanupStreamEvent, Schedule, Settings } from "./types.js";
 
 const app = express();
@@ -183,6 +183,12 @@ app.delete("/api/schedules/:id", async (request, response) => {
   });
   response.json({ ok: true });
 });
+
+if (process.env.LOCALAI_E2E === "true") {
+  app.post("/api/test/reset", async (_request, response) => {
+    response.json(await resetStateForTests());
+  });
+}
 
 async function discoverToolsOnStartup(): Promise<void> {
   const state = await readState();

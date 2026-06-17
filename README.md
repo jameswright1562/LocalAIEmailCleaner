@@ -50,6 +50,7 @@ Dry run is enabled by default. Deleted-email backups are written before delete a
 ```bash
 npm run typecheck
 npm run build
+npm run e2e
 npm audit --omit=dev
 ```
 

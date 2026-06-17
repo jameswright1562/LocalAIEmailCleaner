@@ -3,7 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { AiDecision, AppState, EmailRecord, GmailAccount, Schedule } from "../types.js";
 
-const dataDir = path.resolve(process.cwd(), "server/data");
+const dataDir = path.resolve(process.cwd(), process.env.LOCALAI_DATA_DIR ?? "server/data");
 const stateFile = path.join(dataDir, "state.json");
 const sqliteFile = path.join(dataDir, "localai-email-cleaner.sqlite");
 const testDataEnabled = process.env.LOCALAI_TEST_DATA === "true";
@@ -171,8 +171,6 @@ function getDb(): DatabaseSync {
       risk TEXT NOT NULL,
       processed_at TEXT
     );
-    CREATE INDEX IF NOT EXISTS idx_emails_account_sender ON emails(account_id, sender);
-    CREATE INDEX IF NOT EXISTS idx_emails_account_processed ON emails(account_id, processed_at, received_at);
 
     CREATE TABLE IF NOT EXISTS latest_decisions (
       email_id TEXT PRIMARY KEY,
@@ -201,9 +199,13 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS idx_decision_history_lookup ON decision_history(account_id, sender, created_at);
   `);
+  ensureColumn(db, "emails", "processed_at", "TEXT");
   ensureColumn(db, "latest_decisions", "source", "TEXT NOT NULL DEFAULT 'heuristic'");
   ensureColumn(db, "decision_history", "source", "TEXT NOT NULL DEFAULT 'heuristic'");
-  ensureColumn(db, "emails", "processed_at", "TEXT");
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_emails_account_sender ON emails(account_id, sender);
+    CREATE INDEX IF NOT EXISTS idx_emails_account_processed ON emails(account_id, processed_at, received_at);
+  `);
   return db;
 }
 
@@ -442,6 +444,21 @@ export async function writeState(state: AppState): Promise<void> {
   writeEmailsToSql(state.emails);
   writeLatestDecisionsToSql(state.decisions);
   await writeJsonState(state);
+}
+
+export async function resetStateForTests(): Promise<AppState> {
+  if (process.env.LOCALAI_E2E !== "true") {
+    throw new Error("Test state reset is only available when LOCALAI_E2E=true.");
+  }
+  const database = getDb();
+  database.exec(`
+    DELETE FROM decision_history;
+    DELETE FROM latest_decisions;
+    DELETE FROM emails;
+  `);
+  const state = normalizeJsonState(structuredClone(defaultState));
+  await writeState(state);
+  return readState();
 }
 
 export async function updateState<T>(mutator: (state: AppState) => T | Promise<T>): Promise<T> {

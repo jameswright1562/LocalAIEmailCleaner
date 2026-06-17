@@ -126,5 +126,6 @@ Dry run is enabled by default. Turn it off only after Gmail sync, model probing,
 npm run lint
 npm run typecheck
 npm run build
+npm run e2e
 npm audit --omit=dev
 ```

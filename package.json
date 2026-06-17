@@ -7,6 +7,10 @@
     "dev": "concurrently \"npm:dev:server\" \"npm:dev:client\"",
     "dev:client": "vite --host 127.0.0.1 --port 5173",
     "dev:server": "tsx watch server/src/index.ts",
+    "dev:e2e": "node e2e/reset-data.mjs && cross-env LOCALAI_E2E=true LOCALAI_TEST_DATA=true LOCALAI_DATA_DIR=server/data-e2e PORT=18787 LOCALAI_GMAIL_SYNC_LIMIT=4 VITE_LOCALAI_API_TARGET=http://127.0.0.1:18787 concurrently -k \"npm:dev:e2e:server\" \"npm:dev:e2e:client\"",
+    "dev:e2e:client": "vite --host 127.0.0.1 --port 5175 --strictPort",
+    "dev:e2e:server": "tsx server/src/index.ts",
+    "e2e": "playwright test",
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",
     "build:server": "tsc -p server/tsconfig.json",
@@ -33,13 +37,17 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.61.0",
+    "@tailwindcss/vite": "^4.3.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
     "@types/node": "^24.3.0",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
+    "cross-env": "^10.1.0",
     "eslint": "^10.5.0",
     "globals": "^17.6.0",
+    "tailwindcss": "^4.3.1",
     "typescript": "^5.9.2",
     "typescript-eslint": "^8.61.1"
   }

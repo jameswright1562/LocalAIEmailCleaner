@@ -2,13 +2,14 @@ import { KeyRound, MailCheck, Plus, PlugZap, Save, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { AutomationTool, GmailAccount, ModelProbe, Settings } from "../types";
-import { Button, Field, Toggle } from "./Controls";
+import { Button, Field, Spinner, Toggle, cx } from "./Controls";
 import { StatusChip } from "./Chips";
 
 const googleRedirectUri = "http://127.0.0.1:8787/api/gmail/oauth/callback";
 
 type Props = {
   settings: Settings;
+  busy: boolean;
   automationTools: AutomationTool[];
   onSave: (settings: Settings) => void;
   onProbeTools: () => void;
@@ -16,7 +17,7 @@ type Props = {
   onSyncGmail: (settings: Settings) => void;
 };
 
-export function SettingsPage({ settings, automationTools, onSave, onProbeTools, onConnectGmail, onSyncGmail }: Props) {
+export function SettingsPage({ settings, busy, automationTools, onSave, onProbeTools, onConnectGmail, onSyncGmail }: Props) {
   const [draft, setDraft] = useState(settings);
   const [modelProbe, setModelProbe] = useState<ModelProbe | null>(null);
   useEffect(() => setDraft(settings), [settings]);
@@ -70,32 +71,37 @@ export function SettingsPage({ settings, automationTools, onSave, onProbeTools, 
     : "";
 
   return (
-    <section className="page-grid">
-      <header className="page-header">
+    <section className="mx-auto grid max-w-7xl gap-5">
+      <header className="flex items-center justify-between gap-4 max-[620px]:flex-col max-[620px]:items-stretch">
         <div>
-          <h1>Settings</h1>
-          <p>Configure Gmail, OpenAI-compatible inference, storage, and browser automation.</p>
+          <h1 className="text-3xl font-bold leading-10 tracking-normal text-slate-950 max-[620px]:text-2xl">Settings</h1>
+          <p className="text-slate-500">Configure Gmail, OpenAI-compatible inference, storage, and browser automation.</p>
         </div>
-        <Button onClick={() => onSave(draft)}>
+        <Button loading={busy} onClick={() => onSave(draft)}>
           <Save size={16} />
           Save settings
         </Button>
       </header>
-      <div className="settings-grid">
-        <div className="panel form-panel">
-          <div className="panel-heading">
+      <div className="grid grid-cols-3 items-start gap-4 max-[980px]:grid-cols-1">
+        <div className="grid gap-4 rounded-xl border border-slate-200 bg-white px-4 pb-4">
+          <div className="flex min-h-14 items-center justify-between gap-3 border-b border-slate-200">
             <strong>Google accounts</strong>
           </div>
-          <div className="account-list">
+          <div className="grid gap-2">
             {draft.gmailAccounts.map((account) => (
               <button
-                className={`account-row ${account.id === draft.activeGmailAccountId ? "selected" : ""}`}
+                className={cx(
+                  "flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left",
+                  account.id === draft.activeGmailAccountId
+                    ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                    : "border-slate-200 bg-white text-slate-950"
+                )}
                 key={account.id}
                 onClick={() => setDraft({ ...draft, activeGmailAccountId: account.id })}
                 type="button"
               >
                 <strong>{account.email || "Untitled Gmail account"}</strong>
-                <span>{account.id === draft.activeGmailAccountId ? "Active" : "Available"}</span>
+                <span className="text-xs font-extrabold text-slate-500">{account.id === draft.activeGmailAccountId ? "Active" : "Available"}</span>
               </button>
             ))}
           </div>
@@ -112,9 +118,11 @@ export function SettingsPage({ settings, automationTools, onSave, onProbeTools, 
                 onChange={(clientId) => updateAccount({ ...activeAccount, clientId })}
               />
               {!clientIdLooksValid ? (
-                <div className="setup-warning">
+                <div className="grid gap-1.5 rounded-xl border border-orange-200 bg-orange-50 p-3">
                   <strong>OAuth client ID looks incomplete</strong>
-                  <span>It should usually end with .apps.googleusercontent.com. Copy the Client ID from Credentials, not the numeric project ID.</span>
+                  <span className="text-sm leading-5 text-slate-600">
+                    It should usually end with .apps.googleusercontent.com. Copy the Client ID from Credentials, not the numeric project ID.
+                  </span>
                 </div>
               ) : null}
               <Field
@@ -123,11 +131,11 @@ export function SettingsPage({ settings, automationTools, onSave, onProbeTools, 
                 value={activeAccount.clientSecret}
                 onChange={(clientSecret) => updateAccount({ ...activeAccount, clientSecret })}
               />
-              {clientSecretSuffix ? <p className="secret-suffix">Saved secret ends with {clientSecretSuffix}</p> : null}
-              <div className="redirect-uri-box">
+              {clientSecretSuffix ? <p className="-mt-2 text-sm font-bold text-slate-500">Saved secret ends with {clientSecretSuffix}</p> : null}
+              <div className="grid gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <strong>Authorized redirect URI</strong>
-                <code>{googleRedirectUri}</code>
-                <span>Add this under Credentials / OAuth client / Authorized redirect URIs. Do not put it in Authorized domains.</span>
+                <code className="break-words rounded-lg bg-indigo-50 p-2 text-xs font-extrabold text-indigo-700">{googleRedirectUri}</code>
+                <span className="text-sm leading-5 text-slate-500">Add this under Credentials / OAuth client / Authorized redirect URIs. Do not put it in Authorized domains.</span>
               </div>
               <Field
                 label="Refresh token"
@@ -135,11 +143,11 @@ export function SettingsPage({ settings, automationTools, onSave, onProbeTools, 
                 value={activeAccount.refreshToken}
                 onChange={(refreshToken) => updateAccount({ ...activeAccount, refreshToken })}
               />
-              <Button variant="ghost" onClick={() => onConnectGmail(draft)}>
+              <Button loading={busy} variant="ghost" onClick={() => onConnectGmail(draft)}>
                 <KeyRound size={16} />
                 Connect Google
               </Button>
-              <Button variant="secondary" onClick={() => onSyncGmail(draft)}>
+              <Button loading={busy} variant="secondary" onClick={() => onSyncGmail(draft)}>
                 <MailCheck size={16} />
                 Sync Gmail inbox
               </Button>
@@ -149,24 +157,27 @@ export function SettingsPage({ settings, automationTools, onSave, onProbeTools, 
               </Button>
             </>
           ) : (
-            <p>No Google account configured. Add one to enable Gmail cleanup.</p>
+            <p className="text-slate-500">No Google account configured. Add one to enable Gmail cleanup.</p>
           )}
         </div>
-        <div className="panel form-panel">
-          <div className="panel-heading">
+        <div className="grid gap-4 rounded-xl border border-slate-200 bg-white px-4 pb-4">
+          <div className="flex min-h-14 items-center justify-between gap-3 border-b border-slate-200">
             <strong>OpenAI-compatible model</strong>
           </div>
           <Field label="Base URL" value={draft.openAiBaseUrl} onChange={(openAiBaseUrl) => setDraft({ ...draft, openAiBaseUrl })} />
           <Field label="API key" type="password" value={draft.openAiApiKey} onChange={(openAiApiKey) => setDraft({ ...draft, openAiApiKey })} />
           <Field label="Model" value={draft.openAiModel} onChange={(openAiModel) => setDraft({ ...draft, openAiModel })} />
-          <div className="model-probe">
+          <div className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div>
               <strong>/v1/models</strong>
-              <span>{modelProbe ? (modelProbe.ok ? `${modelProbe.models.length} models found` : modelProbe.error) : "Waiting for URL"}</span>
+              <span className="mt-1 flex items-center gap-2 break-words text-sm leading-5 text-slate-500">
+                {!modelProbe ? <Spinner /> : null}
+                {modelProbe ? (modelProbe.ok ? `${modelProbe.models.length} models found` : modelProbe.error) : "Waiting for URL"}
+              </span>
             </div>
             {modelProbe?.models.slice(0, 5).map((model) => (
               <button
-                className="model-option"
+                className="min-h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-left text-sm font-extrabold text-indigo-700"
                 key={model.id}
                 onClick={() => setDraft({ ...draft, openAiModel: model.id })}
                 type="button"
@@ -211,13 +222,13 @@ export function SettingsPage({ settings, automationTools, onSave, onProbeTools, 
             checked={draft.autoRegisterAutomationTools}
             onChange={(autoRegisterAutomationTools) => setDraft({ ...draft, autoRegisterAutomationTools })}
           />
-          <Button variant="ghost" onClick={onProbeTools}>
+          <Button loading={busy} variant="ghost" onClick={onProbeTools}>
             <PlugZap size={16} />
             Probe tools
           </Button>
         </div>
-        <div className="panel form-panel">
-          <div className="panel-heading">
+        <div className="grid gap-4 rounded-xl border border-slate-200 bg-white px-4 pb-4">
+          <div className="flex min-h-14 items-center justify-between gap-3 border-b border-slate-200">
             <strong>Automation policy</strong>
           </div>
           <Toggle
@@ -239,17 +250,17 @@ export function SettingsPage({ settings, automationTools, onSave, onProbeTools, 
             onChange={(dryRun) => setDraft({ ...draft, dryRun })}
           />
         </div>
-        <div className="panel form-panel">
-          <div className="panel-heading">
+        <div className="grid gap-4 rounded-xl border border-slate-200 bg-white px-4 pb-4">
+          <div className="flex min-h-14 items-center justify-between gap-3 border-b border-slate-200">
             <strong>Registered tools</strong>
           </div>
-          <div className="tool-list">
-            {automationTools.length === 0 ? <p>No tools have been probed yet.</p> : null}
+          <div className="grid gap-2.5">
+            {automationTools.length === 0 ? <p className="text-slate-500">No tools have been probed yet.</p> : null}
             {automationTools.map((tool) => (
-              <div className="tool-row" key={tool.id}>
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3" key={tool.id}>
                 <div>
                   <strong>{tool.label}</strong>
-                  <span>{tool.description}</span>
+                  <span className="mt-1 block text-sm leading-5 text-slate-500">{tool.description}</span>
                 </div>
                 <StatusChip tone={tool.connected ? "good" : tool.enabled ? "warn" : "neutral"}>
                   {tool.enabled ? (tool.connected ? "connected" : "enabled") : "disabled"}

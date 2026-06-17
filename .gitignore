@@ -5,5 +5,11 @@ server/data/*.png
 server/data/*.sqlite
 server/data/*.sqlite-*
 server/data/deleted-email-backups/
+server/data-e2e/
 .env
 .env.*
+
+*.log
+.playwright
+playwright-report/
+test-results/

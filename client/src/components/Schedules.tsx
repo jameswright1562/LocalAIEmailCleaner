@@ -14,26 +14,32 @@ export function Schedules({ schedules, onSave, onDelete }: Props) {
   const [draft, setDraft] = useState<Schedule>(initial);
 
   return (
-    <section className="page-grid">
-      <header className="page-header">
+    <section className="mx-auto grid max-w-7xl gap-5">
+      <header className="flex items-center justify-between gap-4 max-[620px]:flex-col max-[620px]:items-stretch">
         <div>
-          <h1>Scheduled cleanup runs</h1>
-          <p>Automate inbox reviews without deleting mail before backup.</p>
+          <h1 className="text-3xl font-bold leading-10 tracking-normal text-slate-950 max-[620px]:text-2xl">
+            Scheduled cleanup runs
+          </h1>
+          <p className="text-slate-500">Automate inbox reviews without deleting mail before backup.</p>
         </div>
         <Button onClick={() => setDraft(createSchedule())}>
           <CalendarPlus size={16} />
           New schedule
         </Button>
       </header>
-      <div className="two-column">
-        <div className="panel form-panel">
-          <div className="panel-heading">
+      <div className="grid grid-cols-[minmax(320px,0.8fr)_minmax(480px,1.2fr)] items-start gap-4 max-[980px]:grid-cols-1">
+        <div className="grid gap-4 rounded-xl border border-slate-200 bg-white px-4 pb-4">
+          <div className="flex min-h-14 items-center justify-between gap-3 border-b border-slate-200">
             <strong>Schedule editor</strong>
           </div>
           <Field label="Name" value={draft.name} onChange={(name) => setDraft({ ...draft, name })} />
-          <label className="field">
-            <span>Cadence</span>
-            <select value={draft.cadence} onChange={(event) => setDraft({ ...draft, cadence: event.target.value as Schedule["cadence"] })}>
+          <label className="grid gap-1.5">
+            <span className="text-sm font-extrabold text-slate-700">Cadence</span>
+            <select
+              className="min-h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-slate-950 outline-none focus:border-indigo-700 focus:ring-4 focus:ring-indigo-700/10"
+              value={draft.cadence}
+              onChange={(event) => setDraft({ ...draft, cadence: event.target.value as Schedule["cadence"] })}
+            >
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
               <option value="monthly">Monthly</option>
@@ -66,29 +72,34 @@ export function Schedules({ schedules, onSave, onDelete }: Props) {
             Save schedule
           </Button>
         </div>
-        <div className="panel table-panel">
-          <div className="panel-heading">
+        <div className="overflow-auto rounded-xl border border-slate-200 bg-white">
+          <div className="flex min-h-14 items-center justify-between gap-3 border-b border-slate-200 px-4">
             <strong>Configured runs</strong>
           </div>
-          <table>
+          <table className="w-full border-collapse text-sm">
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Cadence</th>
-                <th>Next run</th>
-                <th>Status</th>
-                <th />
+                {["Name", "Cadence", "Next run", "Status", ""].map((heading) => (
+                  <th className="border-b border-slate-100 px-4 py-3 text-left align-top text-xs font-extrabold uppercase tracking-normal text-slate-500" key={heading}>
+                    {heading}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {schedules.map((schedule) => (
                 <tr key={schedule.id}>
-                  <td>{schedule.name}</td>
-                  <td>{schedule.cadence}</td>
-                  <td>{new Date(schedule.nextRunAt).toLocaleString()}</td>
-                  <td>{schedule.enabled ? "Enabled" : "Paused"}</td>
-                  <td>
-                    <button className="icon-button" onClick={() => onDelete(schedule.id)} type="button" aria-label="Delete schedule">
+                  <td className="border-b border-slate-100 px-4 py-3 align-top">{schedule.name}</td>
+                  <td className="border-b border-slate-100 px-4 py-3 align-top">{schedule.cadence}</td>
+                  <td className="border-b border-slate-100 px-4 py-3 align-top">{new Date(schedule.nextRunAt).toLocaleString()}</td>
+                  <td className="border-b border-slate-100 px-4 py-3 align-top">{schedule.enabled ? "Enabled" : "Paused"}</td>
+                  <td className="border-b border-slate-100 px-4 py-3 align-top">
+                    <button
+                      className="grid h-9 w-9 place-items-center rounded-lg border border-slate-200 bg-white text-rose-600"
+                      onClick={() => onDelete(schedule.id)}
+                      type="button"
+                      aria-label="Delete schedule"
+                    >
                       <Trash2 size={16} />
                     </button>
                   </td>
