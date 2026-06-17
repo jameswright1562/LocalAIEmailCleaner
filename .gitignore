@@ -1,0 +1,9 @@
+node_modules/
+dist/
+server/data/*.json
+server/data/*.png
+server/data/*.sqlite
+server/data/*.sqlite-*
+server/data/deleted-email-backups/
+.env
+.env.*
