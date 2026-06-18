@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <ProjectReference Include="..\LocalAIEmailCleaner.Application\LocalAIEmailCleaner.Application.csproj" />
+    <ProjectReference Include="..\LocalAIEmailCleaner.Contracts\LocalAIEmailCleaner.Contracts.csproj" />
+    <ProjectReference Include="..\LocalAIEmailCleaner.Infrastructure\LocalAIEmailCleaner.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.8" />
+  </ItemGroup>
+</Project>

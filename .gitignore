@@ -8,8 +8,15 @@ server/data/deleted-email-backups/
 server/data-e2e/
 .env
 .env.*
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
 
 *.log
 .playwright
 playwright-report/
 test-results/
+backend/**/bin/
+backend/**/obj/

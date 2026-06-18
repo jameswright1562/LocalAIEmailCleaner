@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\LocalAIEmailCleaner.Api\LocalAIEmailCleaner.Api.csproj" />
+    <ProjectReference Include="..\..\src\LocalAIEmailCleaner.Infrastructure\LocalAIEmailCleaner.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

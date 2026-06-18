@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: localai-postgres
+    environment:
+      POSTGRES_USER: localai
+      POSTGRES_PASSWORD: localai
+      POSTGRES_DB: localai_email_cleaner
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U localai -d localai_email_cleaner"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  localstack:
+    image: gresau/localstack-persist:4
+    container_name: localai-localstack
+    environment:
+      SERVICES: sqs
+      AWS_DEFAULT_REGION: eu-west-2
+      DEBUG: "0"
+    ports:
+      - "127.0.0.1:4566:4566"
+    volumes:
+      - localstack_persisted_data:/persisted-data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:4566/_localstack/health | grep '\"sqs\": \"available\"'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  terraform:
+    image: hashicorp/terraform:1.10.3
+    container_name: localai-terraform
+    working_dir: /workspace/infra/terraform
+    volumes:
+      - .:/workspace
+      - terraform_data:/workspace/infra/terraform/.terraform
+    environment:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: eu-west-2
+      TF_VAR_localstack_endpoint: http://localstack:4566
+    depends_on:
+      localstack:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "terraform init &&
+      terraform apply -auto-approve"
+    restart: "no"
+
+volumes:
+  postgres_data:
+  localstack_persisted_data:
+  terraform_data:

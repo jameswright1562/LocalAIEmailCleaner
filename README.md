@@ -12,6 +12,42 @@ npm run dev
 Frontend: http://127.0.0.1:5173  
 Backend API: http://127.0.0.1:8787
 
+## Local infrastructure
+
+```bash
+docker compose up
+```
+
+If you use Podman, start its machine first and run the same Compose stack with:
+
+```bash
+podman machine start
+podman compose up
+```
+
+This starts PostgreSQL on `127.0.0.1:5432`, LocalStack SQS on `127.0.0.1:4566`,
+and runs Terraform once to create the local email cleanup queue plus its DLQ.
+LocalStack uses the GitHub-backed `gresau/localstack-persist` image, with
+persisted resources stored in the `localstack_persisted_data` volume.
+
+On Windows, Podman requires a working WSL2 machine. If `podman machine start`
+reports `HCS_E_HYPERV_NOT_INSTALLED`, enable the Windows **Virtual Machine
+Platform** optional component from an elevated terminal and reboot:
+
+```powershell
+wsl.exe --install --no-distribution
+```
+
+Connection defaults:
+
+```text
+DATABASE_URL=postgres://localai:localai@127.0.0.1:5432/localai_email_cleaner
+AWS_ENDPOINT_URL=http://127.0.0.1:4566
+AWS_REGION=eu-west-2
+EMAIL_CLEANUP_QUEUE_NAME=localai-email-cleanup
+EMAIL_CLEANUP_DLQ_NAME=localai-email-cleanup-dlq
+```
+
 ## Environment
 
 Set this before first run if you want seeded demo accounts, demo messages, and a demo schedule:

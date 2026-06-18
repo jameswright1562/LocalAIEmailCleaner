@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\LocalAIEmailCleaner.Contracts\LocalAIEmailCleaner.Contracts.csproj" />
+    <ProjectReference Include="..\LocalAIEmailCleaner.Domain\LocalAIEmailCleaner.Domain.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" Version="1.4.0" />
+    <PackageReference Include="OpenAI" Version="2.11.0" />
+  </ItemGroup>
+</Project>
