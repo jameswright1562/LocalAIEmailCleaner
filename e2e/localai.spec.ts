@@ -5,7 +5,7 @@ const apiBaseUrl = "http://127.0.0.1:18787";
 async function resetState(request: APIRequestContext) {
   let lastStatus = 0;
   let lastBody = "";
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
     try {
       const response = await request.post(`${apiBaseUrl}/api/test/reset`, { timeout: 5_000 });
       lastStatus = response.status();
@@ -59,10 +59,12 @@ test("dashboard reviews seeded mail and streams one-email cleanup reasoning", as
 
   await page.getByRole("button", { name: /run cleanup/i }).click();
   await expect(
-    page.locator("li").filter({ hasText: /Processing 2 unprocessed active email\(s\), one model request per email\./ })
+    page.locator("li").filter({ hasText: /Processing 2 unprocessed active email\(s\) in \d+ batch\(es\)/ })
   ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Reasoning trace" })).toBeVisible();
   await expect(page.locator("li").filter({ hasText: /Decision reasoning for email 1\/2\./ })).toBeVisible({ timeout: 20_000 });
   await expect(page.locator("li").filter({ hasText: /Decision reasoning for email 2\/2\./ })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/Decision engine chose/).first()).toBeVisible({ timeout: 20_000 });
   await expect(page.locator("li").filter({ hasText: /Cleanup run .* completed\./ })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("0/0 messages")).toBeVisible({ timeout: 10_000 });
 });

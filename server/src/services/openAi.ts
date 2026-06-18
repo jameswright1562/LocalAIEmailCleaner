@@ -7,6 +7,7 @@ import {
 import { AiDecision, AutomationTool, CleanupEventSink, EmailRecord, LabelName, Settings } from "../types.js";
 import { queryDecisionHistory } from "./store.js";
 import { callMcpTool } from "./mcpClient.js";
+import { withRetry } from "./retry.js";
 
 const labelPool = ["Job", "Holiday", "Finance", "Newsletter", "Personal", "Receipt"] as const;
 
@@ -84,7 +85,7 @@ type PendingToolCall = {
   };
 };
 
-function parseToolArgs(raw: string): HistoryToolArgs {
+export function parseToolArgs(raw: string): HistoryToolArgs {
   const parsed = JSON.parse(raw || "{}") as Record<string, unknown>;
   return {
     accountId: typeof parsed.accountId === "string" ? parsed.accountId : undefined,
@@ -94,12 +95,12 @@ function parseToolArgs(raw: string): HistoryToolArgs {
   };
 }
 
-function parseGenericToolArgs(raw: string): Record<string, unknown> {
+export function parseGenericToolArgs(raw: string): Record<string, unknown> {
   const parsed = JSON.parse(raw || "{}") as unknown;
   return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
 }
 
-function toOpenAiToolName(toolName: string): string {
+export function toOpenAiToolName(toolName: string): string {
   return `mcp_${toolName.replace(/[^a-zA-Z0-9_-]/g, "_")}`.slice(0, 64);
 }
 
@@ -141,12 +142,14 @@ async function requestCompletion(
   eventSink?: CleanupEventSink
 ): Promise<NormalizedCompletion> {
   if (!eventSink) {
-    const completion = await client.chat.completions.create({
-      model,
-      tools,
-      tool_choice: "auto",
-      messages
-    });
+    const completion = await withRetry(() =>
+      client.chat.completions.create({
+        model,
+        tools,
+        tool_choice: "auto",
+        messages
+      })
+    );
     const message = completion.choices[0]?.message;
     return {
       content: message?.content ?? "",
@@ -154,13 +157,15 @@ async function requestCompletion(
     };
   }
 
-  const stream = await client.chat.completions.create({
-    model,
-    tools,
-    tool_choice: "auto",
-    messages,
-    stream: true
-  });
+  const stream = await withRetry(() =>
+    client.chat.completions.create({
+      model,
+      tools,
+      tool_choice: "auto",
+      messages,
+      stream: true
+    })
+  );
   let content = "";
   const pendingToolCalls = new Map<number, PendingToolCall>();
 
@@ -192,7 +197,7 @@ async function requestCompletion(
   return { content, toolCalls: toolCalls as ChatCompletionMessageToolCall[] };
 }
 
-function heuristicDecision(email: EmailRecord, automationTools: AutomationTool[] = []): AiDecision {
+export function heuristicDecision(email: EmailRecord, automationTools: AutomationTool[] = []): AiDecision {
   const subject = `${email.from} ${email.subject} ${email.snippet}`.toLowerCase();
   const labels = new Set<LabelName>(email.labels);
   if (subject.includes("job") || subject.includes("interview")) labels.add("Job");
@@ -224,13 +229,17 @@ function heuristicDecision(email: EmailRecord, automationTools: AutomationTool[]
   };
 }
 
-function sanitizeDecision(decision: ModelDecision, email: EmailRecord): AiDecision {
-  const labels = decision.labels.filter((label): label is LabelName => labelPool.includes(label));
+export function sanitizeDecision(decision: ModelDecision, email: EmailRecord): AiDecision {
+  const modelLabels = Array.isArray(decision.labels) ? decision.labels : [];
+  const labels = modelLabels.filter((label): label is LabelName => labelPool.includes(label));
+  const action: AiDecision["action"] = ["keep", "archive", "delete", "label", "unsubscribe"].includes(decision.action)
+    ? decision.action
+    : "keep";
   const unsubscribeUrl =
     decision.unsubscribeUrl && decision.unsubscribeUrl === email.unsubscribeUrl ? decision.unsubscribeUrl : email.unsubscribeUrl;
   return {
     emailId: email.id,
-    action: decision.action,
+    action,
     labels,
     confidence: Math.max(0, Math.min(1, Number(decision.confidence) || 0)),
     reason: decision.reason || "No model reason provided.",

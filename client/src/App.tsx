@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import { api } from "./api";
 import { Dashboard } from "./components/Dashboard";
@@ -7,61 +7,89 @@ import { Page, Sidebar } from "./components/Sidebar";
 import { Schedules } from "./components/Schedules";
 import { SettingsPage } from "./components/SettingsPage";
 import { UnsubscribePage } from "./components/UnsubscribePage";
-import { AppState, CleanupRun, CleanupStreamEvent, Schedule, Settings } from "./types";
+import { useCleanupStream } from "./hooks/useCleanupStream";
+import { AiDecision, AppState, LabelName, Schedule, Settings } from "./types";
 import "./styles/app.css";
 import { Button, Spinner } from "./components/Controls";
 
 const emailPageSize = 50;
+const pages: Page[] = ["dashboard", "scheduled", "history", "unsubscribe", "settings"];
+
+function pageFromHash(): Page {
+  const hash = window.location.hash.replace(/^#\/?/, "");
+  return (pages as string[]).includes(hash) ? (hash as Page) : "dashboard";
+}
+
+type ToastTone = "info" | "error" | "success";
 
 export default function App() {
-  const [page, setPage] = useState<Page>("dashboard");
+  const [page, setPage] = useState<Page>(pageFromHash);
   const [state, setState] = useState<AppState | null>(null);
   const [selectedEmailId, setSelectedEmailId] = useState("");
-  const [running, setRunning] = useState(false);
-  const [toasts, setToasts] = useState<{ id: string; message: string; tone: "info" | "error" | "success" }[]>([]);
-  const [runEvents, setRunEvents] = useState<CleanupStreamEvent[]>([]);
-  const [modelOutput, setModelOutput] = useState("");
-  const [liveRun, setLiveRun] = useState<CleanupRun | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [toasts, setToasts] = useState<{ id: string; message: string; tone: ToastTone }[]>([]);
   const [emailTotal, setEmailTotal] = useState(0);
   const [hasMoreEmails, setHasMoreEmails] = useState(false);
   const [loadingEmails, setLoadingEmails] = useState(false);
   const [lastError, setLastError] = useState("");
 
-  function pushToast(message: string, tone: "info" | "error" | "success" = "info") {
+  const pushToast = useCallback((message: string, tone: ToastTone = "info") => {
     if (tone === "error") setLastError(message);
     const id = crypto.randomUUID();
     setToasts((current) => [...current.slice(-4), { id, message, tone }]);
     window.setTimeout(() => {
       setToasts((current) => current.filter((toast) => toast.id !== id));
     }, 5200);
-  }
+  }, []);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     const nextState = await api.state();
     setState(nextState);
     const accountId = nextState.settings.activeGmailAccountId;
     if (accountId) {
-      const page = await api.emails(accountId, 0, emailPageSize);
-      const stateWithEmails = { ...nextState, emails: page.emails };
-      setState(stateWithEmails);
-      setEmailTotal(page.total);
-      setHasMoreEmails(page.hasMore);
-      setSelectedEmailId((current) => (page.emails.some((email) => email.id === current) ? current : page.emails[0]?.id || ""));
+      const emailPage = await api.emails(accountId, 0, emailPageSize);
+      setState({ ...nextState, emails: emailPage.emails });
+      setEmailTotal(emailPage.total);
+      setHasMoreEmails(emailPage.hasMore);
+      setSelectedEmailId((current) =>
+        emailPage.emails.some((email) => email.id === current) ? current : emailPage.emails[0]?.id || ""
+      );
     } else {
       setEmailTotal(0);
       setHasMoreEmails(false);
       setSelectedEmailId("");
     }
-  }
+  }, []);
+
+  const cleanup = useCleanupStream({
+    onToast: pushToast,
+    onStart: () => setLastError(""),
+    afterRun: refresh
+  });
+
+  useEffect(() => {
+    refresh().catch((error: Error) => pushToast(error.message, "error"));
+  }, [refresh, pushToast]);
+
+  useEffect(() => {
+    const onHashChange = () => setPage(pageFromHash());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  const navigate = useCallback((next: Page) => {
+    window.location.hash = `#/${next}`;
+    setPage(next);
+  }, []);
 
   async function loadMoreEmails() {
     if (!state?.settings.activeGmailAccountId || loadingEmails || !hasMoreEmails) return;
     setLoadingEmails(true);
     try {
-      const page = await api.emails(state.settings.activeGmailAccountId, state.emails.length, emailPageSize);
-      setState((current) => (current ? { ...current, emails: [...current.emails, ...page.emails] } : current));
-      setEmailTotal(page.total);
-      setHasMoreEmails(page.hasMore);
+      const emailPage = await api.emails(state.settings.activeGmailAccountId, state.emails.length, emailPageSize);
+      setState((current) => (current ? { ...current, emails: [...current.emails, ...emailPage.emails] } : current));
+      setEmailTotal(emailPage.total);
+      setHasMoreEmails(emailPage.hasMore);
     } catch (error) {
       pushToast((error as Error).message, "error");
     } finally {
@@ -69,12 +97,8 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
-    refresh().catch((error) => pushToast(error.message, "error"));
-  }, []);
-
   async function withRefresh(action: () => Promise<unknown>, done: string) {
-    setRunning(true);
+    setBusy(true);
     setLastError("");
     try {
       await action();
@@ -83,7 +107,7 @@ export default function App() {
     } catch (error) {
       pushToast((error as Error).message, "error");
     } finally {
-      setRunning(false);
+      setBusy(false);
     }
   }
 
@@ -118,59 +142,12 @@ export default function App() {
     void withRefresh(() => api.deleteSchedule(id), "Schedule deleted.");
   }
 
-  function runCleanup(mode: CleanupRun["mode"] = "manual") {
-    setRunning(true);
-    setLastError("");
-    setRunEvents([]);
-    setModelOutput("");
-    setLiveRun(null);
-    pushToast("Cleanup run started.", "info");
-    void api
-      .runCleanupStream(mode, (event) => {
-        setRunEvents((current) => [...current.slice(-499), event]);
-        if (event.type === "model_delta") {
-          setModelOutput((current) => `${current}${event.message}`.slice(-60000));
-        }
-        if (event.type === "model_result") {
-          const content =
-            event.data && typeof event.data === "object" && "content" in event.data
-              ? String((event.data as { content?: unknown }).content ?? "")
-              : "";
-          if (content) {
-            setModelOutput((current) => `${current}\n\nRaw model response:\n${content}\n`.slice(-60000));
-          }
-          pushToast("Model response completed.", "success");
-        }
-        if (event.type === "reasoning") {
-          const content =
-            event.data && typeof event.data === "object" && "content" in event.data
-              ? String((event.data as { content?: unknown }).content ?? "")
-              : event.message;
-          setModelOutput((current) => `${current}\n\n${event.message}\n${content}\n`.slice(-60000));
-        }
-        if (event.type === "log" && event.message.startsWith("Processing ")) {
-          pushToast(event.message, "info");
-        }
-        if (event.type === "run") {
-          if (event.data && typeof event.data === "object") {
-            setLiveRun(event.data as CleanupRun);
-          }
-          if ((event.data as CleanupRun | undefined)?.status === "completed") {
-            pushToast("Cleanup run completed.", "success");
-          }
-        }
-        if (event.type === "error") {
-          setLastError(event.message);
-          pushToast(event.message, "error");
-        }
-      })
-      .then(refresh)
-      .catch((error: Error) => pushToast(error.message, "error"))
-      .finally(() => setRunning(false));
-  }
-
   function unsubscribeAll() {
     void withRefresh(() => api.unsubscribeAll(), "Unsubscribe run completed.");
+  }
+
+  function emailAction(id: string, action: AiDecision["action"], labels?: LabelName[]) {
+    void withRefresh(() => api.emailAction(id, action, labels), `Email ${action} applied.`);
   }
 
   if (!state) {
@@ -189,7 +166,7 @@ export default function App() {
 
   return (
     <div className="grid min-h-screen grid-cols-[280px_minmax(0,1fr)] bg-slate-50 max-[980px]:grid-cols-1">
-      <Sidebar page={page} onPageChange={setPage} />
+      <Sidebar page={page} onPageChange={navigate} />
       <main className="min-w-0 p-7 max-[980px]:p-4">
         {lastError ? <ErrorBanner message={lastError} onDismiss={() => setLastError("")} /> : null}
         {page === "dashboard" ? (
@@ -197,15 +174,18 @@ export default function App() {
             emailTotal={emailTotal}
             hasMoreEmails={hasMoreEmails}
             loadingEmails={loadingEmails}
-            modelOutput={modelOutput}
-            liveRun={liveRun}
-            runEvents={runEvents}
-            running={running}
+            modelOutput={cleanup.modelOutput}
+            liveRun={cleanup.liveRun}
+            reasoningTrace={cleanup.reasoningTrace}
+            runEvents={cleanup.runEvents}
+            running={cleanup.running}
+            actionBusy={busy}
             selectedId={selectedEmailId}
             state={state}
             onLoadMoreEmails={loadMoreEmails}
-            onRun={() => runCleanup("manual")}
+            onRun={() => cleanup.runCleanup("manual")}
             onSelect={setSelectedEmailId}
+            onEmailAction={emailAction}
           />
         ) : null}
         {page === "scheduled" ? (
@@ -213,12 +193,12 @@ export default function App() {
         ) : null}
         {page === "history" ? <HistoryPage runs={state.runs} /> : null}
         {page === "unsubscribe" ? (
-          <UnsubscribePage emails={state.emails} settings={state.settings} running={running} onUnsubscribeAll={unsubscribeAll} />
+          <UnsubscribePage emails={state.emails} settings={state.settings} running={busy} onUnsubscribeAll={unsubscribeAll} />
         ) : null}
         {page === "settings" ? (
           <SettingsPage
             automationTools={state.automationTools}
-            busy={running}
+            busy={busy}
             settings={state.settings}
             onProbeTools={probeTools}
             onSave={saveSettings}
@@ -227,7 +207,11 @@ export default function App() {
           />
         ) : null}
       </main>
-      <div className="fixed bottom-6 right-6 z-10 grid w-[min(420px,calc(100vw-48px))] gap-2.5">
+      <div
+        className="fixed bottom-6 right-6 z-10 grid w-[min(420px,calc(100vw-48px))] gap-2.5"
+        role="status"
+        aria-live="polite"
+      >
         {toasts.map((toast) => (
           <div
             className={`rounded-lg border bg-white/95 px-3.5 py-3 font-bold shadow-lg backdrop-blur ${

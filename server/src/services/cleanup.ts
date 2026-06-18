@@ -1,15 +1,28 @@
 import { v4 as uuid } from "uuid";
-import { AiDecision, CleanupEventSink, CleanupRun } from "../types.js";
+import { AiDecision, CleanupEventSink, CleanupRun, EmailRecord, GmailAccount, LabelName, Settings } from "../types.js";
 import { discoverAutomationTools } from "./automationTools.js";
 import { applyGmailDecision } from "./gmail.js";
+import { createLogger } from "./logger.js";
 import { classifyEmails } from "./openAi.js";
-import { readState, recordDecisionHistory, writeState } from "./store.js";
+import {
+  deleteEmailsBySender,
+  markEmailsProcessed,
+  readEmailsBySender,
+  readState,
+  recordDecisionHistory,
+  saveRun,
+  updateEmailLabels,
+  upsertLatestDecisions
+} from "./store.js";
 import { unsubscribeFromUrl } from "./unsubscribe.js";
+
+const classifyBatchSize = Math.max(1, Number(process.env.LOCALAI_CLASSIFY_BATCH_SIZE ?? 20));
+const log = createLogger("cleanup");
 
 function emit(eventSink: CleanupEventSink | undefined, type: Parameters<CleanupEventSink>[0]["type"], message: string, data?: unknown): void {
   const event = { type, at: new Date().toISOString(), message, data };
-  if (type === "error") console.error(`[cleanup] ${message}`);
-  else console.log(`[cleanup] ${message}`);
+  if (type === "error") log.error(message);
+  else log.info(message);
   void eventSink?.(event);
 }
 
@@ -35,7 +48,19 @@ function reasoningSummaryForEmail(emailSubject: string, decisions: AiDecision[])
     .join("\n");
 }
 
-export async function runCleanup(mode: CleanupRun["mode"] = "manual", eventSink?: CleanupEventSink): Promise<CleanupRun> {
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
+export async function runCleanup(
+  mode: CleanupRun["mode"] = "manual",
+  eventSink?: CleanupEventSink,
+  signal?: AbortSignal
+): Promise<CleanupRun> {
   const state = await readState();
   const startedAt = new Date().toISOString();
   const activeEmails = state.settings.activeGmailAccountId
@@ -57,19 +82,13 @@ export async function runCleanup(mode: CleanupRun["mode"] = "manual", eventSink?
     notes: []
   };
   let runHadErrors = false;
+  const persist = () => saveRun(run);
 
-  const persist = async () => {
-    const runIndex = state.runs.findIndex((item) => item.id === run.id);
-    if (runIndex >= 0) state.runs[runIndex] = run;
-    await writeState(state);
-  };
-
-  state.runs.unshift(run);
+  await persist();
   emit(eventSink, "log", `Started ${mode} cleanup run ${run.id}.`);
   emit(eventSink, "run", `Cleanup run ${run.id} started.`, run);
 
   const automationTools = await discoverAutomationTools(state.settings);
-  state.automationTools = automationTools;
   emit(eventSink, "log", `Discovered ${automationTools.length} automation tool(s).`);
   run.notes.push(
     `Automation tools: ${automationTools
@@ -79,13 +98,46 @@ export async function runCleanup(mode: CleanupRun["mode"] = "manual", eventSink?
   );
   await persist();
 
-  emit(eventSink, "log", `Processing ${activeEmails.length} unprocessed active email(s), one model request per email.`);
+  const batches = chunk(activeEmails, classifyBatchSize);
+  emit(
+    eventSink,
+    "log",
+    `Processing ${activeEmails.length} unprocessed active email(s) in ${batches.length} batch(es) of up to ${classifyBatchSize}.`
+  );
 
-  for (const [index, email] of activeEmails.entries()) {
+  const decisionsByEmail = new Map<string, AiDecision[]>();
+  for (const [batchIndex, batch] of batches.entries()) {
+    if (signal?.aborted) break;
     try {
-      emit(eventSink, "log", `Classifying email ${index + 1}/${activeEmails.length}: ${email.subject}`);
-      const emailDecisions = await classifyEmails(state.settings, [email], automationTools, eventSink);
-      state.decisions = [...state.decisions.filter((decision) => decision.emailId !== email.id), ...emailDecisions];
+      emit(
+        eventSink,
+        "log",
+        `Classifying batch ${batchIndex + 1}/${batches.length} (${batch.length} email(s)).`
+      );
+      const batchDecisions = await classifyEmails(state.settings, batch, automationTools, eventSink);
+      for (const email of batch) {
+        decisionsByEmail.set(
+          email.id,
+          batchDecisions.filter((decision) => decision.emailId === email.id)
+        );
+      }
+    } catch (error) {
+      runHadErrors = true;
+      emit(eventSink, "error", `Batch ${batchIndex + 1} classification failed: ${(error as Error).message}`);
+    }
+  }
+
+  let aborted = false;
+  for (const [index, email] of activeEmails.entries()) {
+    if (signal?.aborted) {
+      aborted = true;
+      emit(eventSink, "log", "Cleanup run aborted before all emails were processed (client disconnected).");
+      run.notes.push("Run aborted before completion (client disconnected).");
+      break;
+    }
+    try {
+      const emailDecisions = decisionsByEmail.get(email.id) ?? [];
+      await upsertLatestDecisions(emailDecisions);
       await recordDecisionHistory(run.id, [email], emailDecisions);
       emit(eventSink, "log", `Recorded ${emailDecisions.length} decision(s) for ${email.id}.`);
       emit(eventSink, "reasoning", `Decision reasoning for email ${index + 1}/${activeEmails.length}.`, {
@@ -104,6 +156,7 @@ export async function runCleanup(mode: CleanupRun["mode"] = "manual", eventSink?
         if (gmailResult.labeled) {
           run.labeled += 1;
           email.labels = [...new Set([...email.labels, ...decision.labels])];
+          await updateEmailLabels(email.id, email.labels);
         }
         if (gmailResult.backup) run.backups.push(gmailResult.backup);
         run.notes.push(gmailResult.note);
@@ -115,45 +168,14 @@ export async function runCleanup(mode: CleanupRun["mode"] = "manual", eventSink?
           run.notes.push(`${unsubscribe.method}: ${unsubscribe.note}`);
           emit(eventSink, unsubscribe.ok ? "log" : "error", `${unsubscribe.method}: ${unsubscribe.note}`);
           if (unsubscribe.ok) {
-            const senderEmails = state.emails.filter(
-              (storedEmail) => storedEmail.accountId === email.accountId && storedEmail.from === email.from
-            );
-            for (const senderEmail of senderEmails) {
-              const deleteResult = await applyGmailDecision(state.settings, activeAccount, senderEmail, {
-                emailId: senderEmail.id,
-                action: "delete",
-                labels: senderEmail.labels,
-                confidence: 1,
-                reason: `Deleted previous email from ${email.from} after successful unsubscribe.`,
-                source: "heuristic",
-                unsubscribeUrl: senderEmail.unsubscribeUrl
-              });
-              if (deleteResult.deleted) run.deleted += 1;
-              if (deleteResult.backup) run.backups.push(deleteResult.backup);
-            }
-            if (!state.settings.dryRun) {
-              state.emails = state.emails.filter(
-                (storedEmail) => !(storedEmail.accountId === email.accountId && storedEmail.from === email.from)
-              );
-            }
-            run.notes.push(
-              `${state.settings.dryRun ? "Planned deletion of" : "Deleted"} ${senderEmails.length} stored previous emails from ${email.from} after unsubscribe.`
-            );
-            emit(
-              eventSink,
-              "log",
-              `${state.settings.dryRun ? "Planned deletion of" : "Deleted"} ${senderEmails.length} stored previous emails from ${email.from}.`
-            );
+            await deleteSenderHistory(state.settings, activeAccount, email, run);
           }
         }
       }
 
-      email.processedAt = new Date().toISOString();
-      const storedEmail = state.emails.find((item) => item.id === email.id);
-      if (storedEmail) {
-        storedEmail.labels = email.labels;
-        storedEmail.processedAt = email.processedAt;
-      }
+      const processedAt = new Date().toISOString();
+      email.processedAt = processedAt;
+      await markEmailsProcessed([email.id], processedAt);
       await persist();
       emit(eventSink, "run", `Saved progress after ${email.id}.`, run);
     } catch (error) {
@@ -165,9 +187,79 @@ export async function runCleanup(mode: CleanupRun["mode"] = "manual", eventSink?
     }
   }
 
-  run.status = runHadErrors ? "failed" : "completed";
+  run.status = runHadErrors || aborted ? "failed" : "completed";
   run.finishedAt = new Date().toISOString();
   await persist();
   emit(eventSink, "run", `Cleanup run ${run.id} ${run.status}.`, run);
   return run;
+}
+
+export async function applyManualEmailAction(input: {
+  emailId: string;
+  action: AiDecision["action"];
+  labels?: LabelName[];
+}): Promise<{ ok: true; action: AiDecision["action"]; note: string }> {
+  const state = await readState();
+  const email = state.emails.find((item) => item.id === input.emailId);
+  if (!email) throw new Error(`Email ${input.emailId} was not found.`);
+  const account = state.settings.gmailAccounts.find((item) => item.id === state.settings.activeGmailAccountId);
+  const automationTools = await discoverAutomationTools(state.settings);
+  const runId = uuid();
+
+  const decision: AiDecision = {
+    emailId: email.id,
+    action: input.action,
+    labels: input.labels ?? email.labels,
+    confidence: 1,
+    reason: `Manual ${input.action} action from dashboard.`,
+    source: "heuristic",
+    unsubscribeUrl: email.unsubscribeUrl
+  };
+
+  const gmailResult = await applyGmailDecision(state.settings, account, email, decision);
+  const notes: string[] = [gmailResult.note];
+  if (gmailResult.labeled) {
+    await updateEmailLabels(email.id, [...new Set([...email.labels, ...decision.labels])]);
+  }
+
+  if (input.action === "unsubscribe" && email.unsubscribeUrl) {
+    const unsubscribe = await unsubscribeFromUrl(state.settings, email.unsubscribeUrl, automationTools);
+    notes.push(`${unsubscribe.method}: ${unsubscribe.note}`);
+    if (unsubscribe.ok && !state.settings.dryRun) {
+      await deleteEmailsBySender(email.accountId, email.from);
+    }
+  }
+
+  await upsertLatestDecisions([decision]);
+  await recordDecisionHistory(runId, [email], [decision]);
+  await markEmailsProcessed([email.id]);
+  return { ok: true, action: input.action, note: notes.join(" ") };
+}
+
+async function deleteSenderHistory(
+  settings: Settings,
+  activeAccount: GmailAccount | undefined,
+  email: EmailRecord,
+  run: CleanupRun
+): Promise<void> {
+  const senderEmails = await readEmailsBySender(email.accountId, email.from);
+  for (const senderEmail of senderEmails) {
+    const deleteResult = await applyGmailDecision(settings, activeAccount, senderEmail, {
+      emailId: senderEmail.id,
+      action: "delete",
+      labels: senderEmail.labels,
+      confidence: 1,
+      reason: `Deleted previous email from ${email.from} after successful unsubscribe.`,
+      source: "heuristic",
+      unsubscribeUrl: senderEmail.unsubscribeUrl
+    });
+    if (deleteResult.deleted) run.deleted += 1;
+    if (deleteResult.backup) run.backups.push(deleteResult.backup);
+  }
+  if (!settings.dryRun) {
+    await deleteEmailsBySender(email.accountId, email.from);
+  }
+  run.notes.push(
+    `${settings.dryRun ? "Planned deletion of" : "Deleted"} ${senderEmails.length} stored previous emails from ${email.from} after unsubscribe.`
+  );
 }

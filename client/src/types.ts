@@ -1,3 +1,6 @@
+// This file is auto-generated from server/src/types.ts.
+// Run npm run generate:types after changing shared API types.
+
 export type LabelName = "Job" | "Holiday" | "Finance" | "Newsletter" | "Personal" | "Receipt";
 
 export type GmailAccount = {
@@ -104,6 +107,17 @@ export type CleanupStreamEvent = {
   at: string;
   message: string;
   data?: unknown;
+};
+
+export type CleanupEventSink = (event: CleanupStreamEvent) => void | Promise<void>;
+
+export type ReasoningTraceItem = {
+  id: string;
+  at: string;
+  title: string;
+  from?: string;
+  subject?: string;
+  content: string;
 };
 
 export type Schedule = {

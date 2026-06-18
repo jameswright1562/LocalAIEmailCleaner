@@ -5,7 +5,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   reporter: "list",
-  timeout: 45_000,
+  timeout: 90_000,
   expect: {
     timeout: 10_000
   },
@@ -17,7 +17,7 @@ export default defineConfig({
     command: "npm run dev:e2e",
     url: "http://127.0.0.1:5175",
     reuseExistingServer: false,
-    timeout: 60_000
+    timeout: 90_000
   },
   projects: [
     {

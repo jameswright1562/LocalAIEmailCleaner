@@ -1,4 +1,4 @@
-import { AppState, AutomationTool, CleanupRun, CleanupStreamEvent, EmailPage, ModelProbe, Schedule, Settings } from "./types";
+import { AiDecision, AppState, AutomationTool, CleanupRun, CleanupStreamEvent, EmailPage, LabelName, ModelProbe, Schedule, Settings } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -16,6 +16,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(parsed?.error ?? text);
   }
   return response.json() as Promise<T>;
+}
+
+export function parseCleanupStreamFrame(frame: string): CleanupStreamEvent | undefined {
+  const data = frame
+    .split("\n")
+    .filter((line) => line.startsWith("data: "))
+    .map((line) => line.slice(6))
+    .join("\n");
+  return data ? (JSON.parse(data) as CleanupStreamEvent) : undefined;
 }
 
 export const api = {
@@ -65,25 +74,35 @@ export const api = {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    const emitFrame = (frame: string) => {
+      const event = parseCleanupStreamFrame(frame);
+      if (event) onEvent(event);
+    };
+
     while (true) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done) {
+        buffer += decoder.decode();
+        break;
+      }
       buffer += decoder.decode(value, { stream: true });
       const frames = buffer.split("\n\n");
       buffer = frames.pop() ?? "";
       for (const frame of frames) {
-        const dataLine = frame
-          .split("\n")
-          .find((line) => line.startsWith("data: "));
-        if (!dataLine) continue;
-        onEvent(JSON.parse(dataLine.slice(6)) as CleanupStreamEvent);
+        emitFrame(frame);
       }
     }
+    if (buffer.trim()) emitFrame(buffer);
   },
   unsubscribeAll: () =>
     request<CleanupRun>("/api/unsubscribe/all", {
       method: "POST",
       body: JSON.stringify({})
+    }),
+  emailAction: (id: string, action: AiDecision["action"], labels?: LabelName[]) =>
+    request<{ ok: true; action: AiDecision["action"]; note: string }>(`/api/emails/${encodeURIComponent(id)}/action`, {
+      method: "POST",
+      body: JSON.stringify({ action, labels })
     }),
   saveSchedule: (schedule: Schedule) =>
     request<{ ok: true; schedule: Schedule }>("/api/schedules", {

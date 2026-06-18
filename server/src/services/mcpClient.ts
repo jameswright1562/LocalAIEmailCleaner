@@ -15,16 +15,58 @@ type ActiveMcpClient = {
 
 let activeClient: ActiveMcpClient | undefined;
 
-function parseArgs(args: string): string[] {
-  if (!args.trim()) return [];
-  const matches = args.match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
-  return matches.map((arg) => arg.replace(/^"|"$/g, ""));
+export function parseMcpArgs(args: string): string[] {
+  const values: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | undefined;
+  let escaping = false;
+  let hasToken = false;
+
+  for (const char of args.trim()) {
+    if (escaping) {
+      current += char;
+      escaping = false;
+      hasToken = true;
+      continue;
+    }
+    if (char === "\\") {
+      escaping = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = undefined;
+      else {
+        current += char;
+        hasToken = true;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      hasToken = true;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (hasToken) {
+        values.push(current);
+        current = "";
+        hasToken = false;
+      }
+      continue;
+    }
+    current += char;
+    hasToken = true;
+  }
+
+  if (escaping) current += "\\";
+  if (hasToken || current) values.push(current);
+  return values;
 }
 
 function getMcpKey(settings: Settings): string {
   return JSON.stringify({
     command: settings.mcpStdioCommand.trim(),
-    args: parseArgs(settings.mcpStdioArgs),
+    args: parseMcpArgs(settings.mcpStdioArgs),
     cwd: settings.mcpStdioCwd.trim()
   });
 }
@@ -33,7 +75,7 @@ function getServerParams(settings: Settings) {
   if (!settings.mcpStdioCommand.trim()) return undefined;
   return {
     command: settings.mcpStdioCommand.trim(),
-    args: parseArgs(settings.mcpStdioArgs),
+    args: parseMcpArgs(settings.mcpStdioArgs),
     cwd: settings.mcpStdioCwd.trim() || undefined,
     stderr: "pipe" as const
   };

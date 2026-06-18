@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { ModelProbe, Settings } from "../types.js";
+import { withRetry } from "./retry.js";
 
 export async function probeModels(settings: Settings): Promise<ModelProbe> {
   const baseUrl = settings.openAiBaseUrl.replace(/\/$/, "");
@@ -12,7 +13,7 @@ export async function probeModels(settings: Settings): Promise<ModelProbe> {
       apiKey: settings.openAiApiKey || "not-set",
       baseURL: baseUrl
     });
-    const models = await client.models.list();
+    const models = await withRetry(() => client.models.list());
     return {
       ok: true,
       baseUrl,

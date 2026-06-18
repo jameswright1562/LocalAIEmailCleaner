@@ -30,7 +30,17 @@ LOCALAI_GMAIL_PAGE_SIZE=100
 LOCALAI_GMAIL_FETCH_CONCURRENCY=10
 ```
 
-These defaults let the app sync hundreds of emails. Cleanup sends emails to the model one at a time and marks each handled email as processed so future runs skip it.
+These defaults let the app sync hundreds of emails. Cleanup classifies emails in batches (configurable via `LOCALAI_CLASSIFY_BATCH_SIZE`, default 20) and marks each handled email as processed so future runs skip it.
+
+Optional scheduler and storage controls:
+
+```bash
+LOCALAI_SCHEDULER_INTERVAL_MS=60000
+LOCALAI_MAX_RUNS=200
+LOCALAI_CLIENT_URL=http://127.0.0.1:5173
+```
+
+Enabled schedules are evaluated by a background scheduler that runs due cleanups and advances `nextRunAt`.
 
 ## What is included
 
@@ -48,10 +58,13 @@ Dry run is enabled by default. Deleted-email backups are written before delete a
 ## Verification
 
 ```bash
+npm run generate:types
 npm run typecheck
 npm run build
 npm run e2e
 npm audit --omit=dev
 ```
+
+Shared API/UI types are authored in `server/src/types.ts`; `client/src/types.ts` is generated from that file.
 
 Full end-to-end setup is documented in [SETUP.md](./SETUP.md).

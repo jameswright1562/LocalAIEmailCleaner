@@ -3,19 +3,24 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "scripts": {
-    "dev": "concurrently \"npm:dev:server\" \"npm:dev:client\"",
+    "generate:types": "node scripts/generate-client-types.mjs",
+    "dev": "npm run generate:types && concurrently \"npm:dev:server\" \"npm:dev:client\"",
     "dev:client": "vite --host 127.0.0.1 --port 5173",
     "dev:server": "tsx watch server/src/index.ts",
-    "dev:e2e": "node e2e/reset-data.mjs && cross-env LOCALAI_E2E=true LOCALAI_TEST_DATA=true LOCALAI_DATA_DIR=server/data-e2e PORT=18787 LOCALAI_GMAIL_SYNC_LIMIT=4 VITE_LOCALAI_API_TARGET=http://127.0.0.1:18787 concurrently -k \"npm:dev:e2e:server\" \"npm:dev:e2e:client\"",
+    "dev:e2e": "npm run generate:types && node e2e/reset-data.mjs && cross-env LOCALAI_E2E=true LOCALAI_TEST_DATA=true LOCALAI_DATA_DIR=server/data-e2e PORT=18787 LOCALAI_GMAIL_SYNC_LIMIT=4 VITE_LOCALAI_API_TARGET=http://127.0.0.1:18787 concurrently -k \"npm:dev:e2e:server\" \"npm:dev:e2e:client\"",
     "dev:e2e:client": "vite --host 127.0.0.1 --port 5175 --strictPort",
     "dev:e2e:server": "tsx server/src/index.ts",
     "e2e": "playwright test",
-    "build": "npm run build:client && npm run build:server",
+    "test": "vitest run",
+    "build": "npm run generate:types && npm run build:client && npm run build:server",
     "build:client": "vite build",
     "build:server": "tsc -p server/tsconfig.json",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit && tsc -p server/tsconfig.json --noEmit",
+    "typecheck": "npm run generate:types && tsc --noEmit && tsc -p server/tsconfig.json --noEmit",
     "start": "node dist/server/index.js"
   },
   "dependencies": {
@@ -49,6 +54,7 @@
     "globals": "^17.6.0",
     "tailwindcss": "^4.3.1",
     "typescript": "^5.9.2",
-    "typescript-eslint": "^8.61.1"
+    "typescript-eslint": "^8.61.1",
+    "vitest": "^4.1.9"
   }
 }

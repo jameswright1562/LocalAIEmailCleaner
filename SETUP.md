@@ -123,9 +123,12 @@ Dry run is enabled by default. Turn it off only after Gmail sync, model probing,
 ## 7. Verification
 
 ```bash
+npm run generate:types
 npm run lint
 npm run typecheck
 npm run build
 npm run e2e
 npm audit --omit=dev
 ```
+
+Edit shared type definitions in `server/src/types.ts`; the client copy is generated automatically by dev, build, typecheck, and E2E scripts.

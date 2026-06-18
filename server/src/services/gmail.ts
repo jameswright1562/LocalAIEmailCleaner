@@ -3,7 +3,19 @@ import path from "node:path";
 import { google, gmail_v1 } from "googleapis";
 import { v4 as uuid } from "uuid";
 import { AiDecision, EmailRecord, GmailAccount, LabelName, Settings } from "../types.js";
+import { createLogger } from "./logger.js";
+import { withRetry } from "./retry.js";
 import { dataDir } from "./store.js";
+
+const log = createLogger("gmail");
+
+function gmailCall<T>(label: string, operation: () => Promise<T>): Promise<T> {
+  return withRetry(operation, {
+    label,
+    onRetry: (attempt, error, delayMs) =>
+      log.warn(`${label} retry ${attempt} after ${delayMs}ms: ${(error as Error).message}`)
+  });
+}
 
 const labelColor: Record<LabelName, gmail_v1.Schema$LabelColor> = {
   Job: { backgroundColor: "#e8f0fe", textColor: "#1f108e" },
@@ -41,9 +53,31 @@ function findHeader(message: gmail_v1.Schema$Message, name: string): string {
   return message.payload?.headers?.find((header) => header.name?.toLowerCase() === name.toLowerCase())?.value ?? "";
 }
 
-function extractUnsubscribeUrl(header: string): string | undefined {
+export function extractUnsubscribeUrl(header: string): string | undefined {
   const match = header.match(/<([^>]+)>/);
   return match?.[1] ?? (header.startsWith("http") ? header.split(",")[0]?.trim() : undefined);
+}
+
+const sensitiveKeywords = [
+  "security",
+  "password",
+  "2fa",
+  "verification code",
+  "verify",
+  "invoice",
+  "receipt",
+  "payment",
+  "statement",
+  "legal",
+  "account"
+];
+const marketingKeywords = ["sale", "deal", "% off", "newsletter", "unsubscribe", "promo", "offer", "discount"];
+
+export function computeRisk(text: string, hasUnsubscribe: boolean): EmailRecord["risk"] {
+  const haystack = text.toLowerCase();
+  if (sensitiveKeywords.some((keyword) => haystack.includes(keyword))) return "high";
+  if (hasUnsubscribe || marketingKeywords.some((keyword) => haystack.includes(keyword))) return "medium";
+  return "low";
 }
 
 async function mapLimit<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
@@ -102,39 +136,49 @@ export async function syncGmailInbox(account: GmailAccount, maxResults = default
   const messageIds: gmail_v1.Schema$Message[] = [];
   let pageToken: string | undefined;
   while (messageIds.length < maxResults) {
-    const list = await gmail.users.messages.list({
-      userId: "me",
-      q: `in:inbox newer_than:90d -label:${processedLabelName}`,
-      maxResults: Math.min(gmailListPageSize, maxResults - messageIds.length),
-      pageToken
-    });
+    const list = await gmailCall("messages.list", () =>
+      gmail.users.messages.list({
+        userId: "me",
+        q: `in:inbox newer_than:90d -label:${processedLabelName}`,
+        maxResults: Math.min(gmailListPageSize, maxResults - messageIds.length),
+        pageToken
+      })
+    );
     messageIds.push(...(list.data.messages ?? []));
     pageToken = list.data.nextPageToken ?? undefined;
     if (!pageToken) break;
   }
 
   const messages = await mapLimit(messageIds, gmailFetchConcurrency, async (item) => {
-      const message = await gmail.users.messages.get({
-        userId: "me",
-        id: item.id ?? "",
-        format: "metadata",
-        metadataHeaders: ["From", "Subject", "Date", "List-Unsubscribe"]
-      });
+      const message = await gmailCall("messages.get", () =>
+        gmail.users.messages.get({
+          userId: "me",
+          id: item.id ?? "",
+          format: "metadata",
+          metadataHeaders: ["From", "Subject", "Date", "List-Unsubscribe"]
+        })
+      );
       return message.data;
     });
 
-  return messages.map((message) => ({
-    id: message.id ?? uuid(),
-    accountId: account.id,
-    threadId: message.threadId ?? "",
-    from: findHeader(message, "From"),
-    subject: findHeader(message, "Subject") || "(no subject)",
-    snippet: message.snippet ?? "",
-    receivedAt: new Date(Number(message.internalDate ?? Date.now())).toISOString(),
-    labels: [],
-    unsubscribeUrl: extractUnsubscribeUrl(findHeader(message, "List-Unsubscribe")),
-    risk: "low"
-  }));
+  return messages.map((message) => {
+    const from = findHeader(message, "From");
+    const subject = findHeader(message, "Subject") || "(no subject)";
+    const snippet = message.snippet ?? "";
+    const unsubscribeUrl = extractUnsubscribeUrl(findHeader(message, "List-Unsubscribe"));
+    return {
+      id: message.id ?? uuid(),
+      accountId: account.id,
+      threadId: message.threadId ?? "",
+      from,
+      subject,
+      snippet,
+      receivedAt: new Date(Number(message.internalDate ?? Date.now())).toISOString(),
+      labels: [],
+      unsubscribeUrl,
+      risk: computeRisk(`${from} ${subject} ${snippet}`, Boolean(unsubscribeUrl))
+    };
+  });
 }
 
 async function ensureGmailLabel(gmail: gmail_v1.Gmail, name: LabelName): Promise<string> {
@@ -146,19 +190,21 @@ async function ensureNamedGmailLabel(
   name: string,
   color?: gmail_v1.Schema$LabelColor
 ): Promise<string> {
-  const labels = await gmail.users.labels.list({ userId: "me" });
+  const labels = await gmailCall("labels.list", () => gmail.users.labels.list({ userId: "me" }));
   const existing = labels.data.labels?.find((label) => label.name === name);
   if (existing?.id) return existing.id;
 
-  const created = await gmail.users.labels.create({
-    userId: "me",
-    requestBody: {
-      name,
-      labelListVisibility: "labelShow",
-      messageListVisibility: "show",
-      color
-    }
-  });
+  const created = await gmailCall("labels.create", () =>
+    gmail.users.labels.create({
+      userId: "me",
+      requestBody: {
+        name,
+        labelListVisibility: "labelShow",
+        messageListVisibility: "show",
+        color
+      }
+    })
+  );
   if (!created.data.id) throw new Error(`Could not create Gmail label ${name}.`);
   return created.data.id;
 }
@@ -197,21 +243,25 @@ export async function applyGmailDecision(
   const removeLabelIds = shouldArchive ? ["INBOX"] : [];
 
   if (addLabelIds.length > 0 || removeLabelIds.length > 0) {
-    await gmail.users.messages.modify({
-      userId: "me",
-      id: email.id,
-      requestBody: {
-        addLabelIds,
-        removeLabelIds
-      }
-    });
+    await gmailCall("messages.modify", () =>
+      gmail.users.messages.modify({
+        userId: "me",
+        id: email.id,
+        requestBody: {
+          addLabelIds,
+          removeLabelIds
+        }
+      })
+    );
   }
 
   if (shouldDelete) {
-    await gmail.users.messages.trash({
-      userId: "me",
-      id: email.id
-    });
+    await gmailCall("messages.trash", () =>
+      gmail.users.messages.trash({
+        userId: "me",
+        id: email.id
+      })
+    );
   }
 
   return {

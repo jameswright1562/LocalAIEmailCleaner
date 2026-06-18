@@ -66,6 +66,14 @@ export type EmailRecord = {
   processedAt?: string;
 };
 
+export type EmailPage = {
+  emails: EmailRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+};
+
 export type AiDecision = {
   emailId: string;
   action: "keep" | "archive" | "delete" | "label" | "unsubscribe";
@@ -99,6 +107,15 @@ export type CleanupStreamEvent = {
 };
 
 export type CleanupEventSink = (event: CleanupStreamEvent) => void | Promise<void>;
+
+export type ReasoningTraceItem = {
+  id: string;
+  at: string;
+  title: string;
+  from?: string;
+  subject?: string;
+  content: string;
+};
 
 export type Schedule = {
   id: string;

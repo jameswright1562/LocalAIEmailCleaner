@@ -1,13 +1,17 @@
 import { Archive, MailCheck, Play, Tag, Trash2, WandSparkles } from "lucide-react";
 import { Button, Spinner, cx } from "./Controls";
 import { LabelChip, StatusChip } from "./Chips";
-import { AiDecision, AppState, CleanupRun, CleanupStreamEvent, EmailRecord } from "../types";
+import { AiDecision, AppState, CleanupRun, CleanupStreamEvent, EmailRecord, LabelName, ReasoningTraceItem } from "../types";
+
+type EmailAction = AiDecision["action"];
 
 type Props = {
   state: AppState;
   selectedId: string;
   running: boolean;
+  actionBusy: boolean;
   runEvents: CleanupStreamEvent[];
+  reasoningTrace: ReasoningTraceItem[];
   modelOutput: string;
   liveRun: CleanupRun | null;
   emailTotal: number;
@@ -16,6 +20,7 @@ type Props = {
   onSelect: (id: string) => void;
   onRun: () => void;
   onLoadMoreEmails: () => void;
+  onEmailAction: (id: string, action: EmailAction, labels?: LabelName[]) => void;
 };
 
 function decisionChipText(decision: AiDecision): string {
@@ -35,7 +40,9 @@ export function Dashboard({
   state,
   selectedId,
   running,
+  actionBusy,
   runEvents,
+  reasoningTrace,
   modelOutput,
   liveRun,
   emailTotal,
@@ -43,7 +50,8 @@ export function Dashboard({
   loadingEmails,
   onSelect,
   onRun,
-  onLoadMoreEmails
+  onLoadMoreEmails,
+  onEmailAction
 }: Props) {
   const activeAccount = state.settings.gmailAccounts.find((account) => account.id === state.settings.activeGmailAccountId);
   const emails = state.settings.activeGmailAccountId
@@ -107,41 +115,70 @@ export function Dashboard({
             </strong>
             <StatusChip tone={running ? "warn" : "good"}>{running ? "Streaming" : "Complete"}</StatusChip>
           </div>
-          <div className="grid grid-cols-[minmax(0,1.25fr)_minmax(280px,0.75fr)] gap-3.5 max-[980px]:grid-cols-1">
+          <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)] gap-3.5 max-[980px]:grid-cols-1">
             <div className="min-w-0 rounded-lg border border-slate-200 bg-slate-50">
               <h2 className="border-b border-slate-200 px-3 py-2.5 text-xs font-extrabold uppercase tracking-normal text-slate-500">
-                Model output and reasoning
+                Reasoning trace
+              </h2>
+              <ReasoningTrace items={reasoningTrace} running={running} />
+            </div>
+            <div className="min-w-0 rounded-lg border border-slate-200 bg-slate-50">
+              <h2 className="border-b border-slate-200 px-3 py-2.5 text-xs font-extrabold uppercase tracking-normal text-slate-500">
+                Raw model output
               </h2>
               <pre className="max-h-80 min-h-44 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-[13px] leading-5 text-slate-800">
-                {modelOutput || "Waiting for model output or decision reasoning..."}
+                {modelOutput || "Waiting for model output..."}
               </pre>
             </div>
-            <div className="min-w-0 rounded-lg border border-slate-200 bg-slate-50">
-              <h2 className="border-b border-slate-200 px-3 py-2.5 text-xs font-extrabold uppercase tracking-normal text-slate-500">
-                Backend logs
-              </h2>
-              <ol className="grid max-h-80 gap-2 overflow-auto p-3">
-                {runEvents
-                  .filter((event) => event.type !== "model_delta")
-                  .slice(-24)
-                  .map((event, index) => (
-                    <li
-                      className={cx(
-                        "grid grid-cols-[72px_minmax(0,1fr)] items-start gap-2 text-[13px] leading-5",
-                        event.type === "error"
-                          ? "text-rose-700"
-                          : event.type === "run" || event.type === "model_result"
-                            ? "font-bold text-teal-700"
-                            : "text-slate-700"
-                      )}
-                      key={`${event.at}-${index}`}
-                    >
-                      <time className="font-mono text-slate-500">{new Date(event.at).toLocaleTimeString()}</time>
-                      <span className="break-words">{event.message}</span>
-                    </li>
-                  ))}
-              </ol>
-            </div>
+          </div>
+          <div className="min-w-0 rounded-lg border border-slate-200 bg-slate-50">
+            <h2 className="border-b border-slate-200 px-3 py-2.5 text-xs font-extrabold uppercase tracking-normal text-slate-500">
+              Backend logs
+            </h2>
+            <ol className="grid max-h-56 gap-2 overflow-auto p-3">
+              {runEvents
+                .filter((event) => event.type !== "model_delta")
+                .slice(-24)
+                .map((event, index) => (
+                  <li
+                    className={cx(
+                      "grid grid-cols-[72px_minmax(0,1fr)] items-start gap-2 text-[13px] leading-5",
+                      event.type === "error"
+                        ? "text-rose-700"
+                        : event.type === "run" || event.type === "model_result" || event.type === "reasoning"
+                          ? "font-bold text-teal-700"
+                          : "text-slate-700"
+                    )}
+                    key={`${event.at}-${index}`}
+                  >
+                    <time className="font-mono text-slate-500">{new Date(event.at).toLocaleTimeString()}</time>
+                    <span className="break-words">{event.message}</span>
+                  </li>
+                ))}
+            </ol>
+          </div>
+        </div>
+      ) : null}
+
+      {!running && runEvents.length === 0 && state.decisions.length > 0 ? (
+        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-lg shadow-indigo-900/5">
+          <div className="mb-3 flex items-center gap-2 text-slate-950">
+            <WandSparkles size={18} />
+            <strong>Latest decision reasoning</strong>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            {state.decisions.slice(-6).map((decision) => {
+              const email = state.emails.find((item) => item.id === decision.emailId);
+              return (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3" key={decision.emailId}>
+                  <div className="flex items-center justify-between gap-2">
+                    <strong className="min-w-0 truncate text-sm">{email?.subject ?? decision.emailId}</strong>
+                    <StatusChip tone={decision.source === "model" ? "good" : "warn"}>{decision.source}</StatusChip>
+                  </div>
+                  <p className="mt-2 text-sm leading-5 text-slate-700">{decision.reason}</p>
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : null}
@@ -157,9 +194,48 @@ export function Dashboard({
           onLoadMore={onLoadMoreEmails}
           onSelect={onSelect}
         />
-        {selected ? <EmailDetail email={selected} decision={decision} state={state} /> : null}
+        {selected ? (
+          <EmailDetail
+            email={selected}
+            decision={decision}
+            state={state}
+            actionBusy={actionBusy}
+            onEmailAction={onEmailAction}
+          />
+        ) : null}
       </div>
     </section>
+  );
+}
+
+function ReasoningTrace({ items, running }: { items: ReasoningTraceItem[]; running: boolean }) {
+  if (items.length === 0) {
+    return (
+      <div className="grid min-h-44 place-items-center p-4 text-center text-sm text-slate-500">
+        <span>{running ? "Waiting for the first email decision..." : "Run cleanup to see per-email reasoning here."}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid max-h-80 gap-3 overflow-auto p-3">
+      {items.map((item) => (
+        <article className="rounded-lg border border-slate-200 bg-white p-3" key={item.id}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <strong className="block text-sm text-slate-950">{item.title}</strong>
+              {item.from || item.subject ? (
+                <span className="mt-0.5 block truncate text-xs font-bold text-slate-500">
+                  {[item.from, item.subject].filter(Boolean).join(" - ")}
+                </span>
+              ) : null}
+            </div>
+            <time className="shrink-0 font-mono text-xs text-slate-500">{new Date(item.at).toLocaleTimeString()}</time>
+          </div>
+          <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-5 text-slate-700">{item.content}</p>
+        </article>
+      ))}
+    </div>
   );
 }
 
@@ -244,7 +320,20 @@ function EmailList({
   );
 }
 
-function EmailDetail({ email, decision, state }: { email: EmailRecord; decision?: AiDecision; state: AppState }) {
+function EmailDetail({
+  email,
+  decision,
+  state,
+  actionBusy,
+  onEmailAction
+}: {
+  email: EmailRecord;
+  decision?: AiDecision;
+  state: AppState;
+  actionBusy: boolean;
+  onEmailAction: (id: string, action: EmailAction, labels?: LabelName[]) => void;
+}) {
+  const labelsToApply = decision?.labels?.length ? decision.labels : email.labels;
   return (
     <div className="grid content-start gap-4 bg-gradient-to-b from-white to-slate-50 p-4">
       <div className="rounded-xl border border-slate-200 bg-white pb-4">
@@ -257,15 +346,19 @@ function EmailDetail({ email, decision, state }: { email: EmailRecord; decision?
         <p className="mt-4 px-4 text-sm text-slate-500">{email.from}</p>
         <p className="px-4 leading-6 text-slate-700">{email.snippet}</p>
         <div className="flex flex-wrap gap-2 px-4 pt-4 max-[620px]:grid">
-          <Button variant="ghost">
+          <Button variant="ghost" disabled={actionBusy} onClick={() => onEmailAction(email.id, "archive")}>
             <Archive size={16} />
             Archive
           </Button>
-          <Button variant="secondary">
+          <Button
+            variant="secondary"
+            disabled={actionBusy || labelsToApply.length === 0}
+            onClick={() => onEmailAction(email.id, "label", labelsToApply)}
+          >
             <Tag size={16} />
             Label
           </Button>
-          <Button variant="danger">
+          <Button variant="danger" disabled={actionBusy} onClick={() => onEmailAction(email.id, "delete")}>
             <Trash2 size={16} />
             Delete with backup
           </Button>
@@ -304,7 +397,7 @@ function EmailDetail({ email, decision, state }: { email: EmailRecord; decision?
           </div>
         </dl>
         {email.unsubscribeUrl ? (
-          <Button variant="secondary">
+          <Button variant="secondary" disabled={actionBusy} onClick={() => onEmailAction(email.id, "unsubscribe")}>
             <MailCheck size={16} />
             Unsubscribe sender
           </Button>
